@@ -54,7 +54,7 @@ class SMAOffset_Hippocritical_dca(IStrategy):
     # Use this option with caution!
     # enables a full 1st slot and base+safety-order for the 2nd slot before you run out of money in your wallet.
     # (combo from the .ods-file: 4+2, see rows "Overbuy calculation")
-    overbuy_factor = 1.56
+    overbuy_factor = 1.295
 
     position_adjustment_enable = True
     initial_safety_order_trigger = -0.02
