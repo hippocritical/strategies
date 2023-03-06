@@ -44,16 +44,28 @@ def EWO(dataframe, ema_length=5, ema2_length=35):
     return emadif
 
 
+def lerp(a: float, b: float, t: float) -> float:
+    """Linear interpolate on the scale given by a to b, using t as the point on that scale.
+    Examples
+    --------
+        50 == lerp(0, 100, 0.5)
+        4.2 == lerp(1, 5, 0.8)
+    """
+    return (1 - t) * a + t * b
+
+
 logger = logging.getLogger(__name__)
 
 
 class SMAOffset_Hippocritical_dca(IStrategy):
     # Original: SMAOffsetProtectOptV1 by kkeue, shared on the freqtrade discord at 2021-06-19
     # Added dca of Stash86, modified and optimized it.
+    # Added jorikito#2815 's partial fill compensation
 
     # Use this option with caution!
     # enables a full 1st slot and base+safety-order for the 2nd slot before you run out of money in your wallet.
-    # (combo from the .ods-file: 4+2, see rows "Overbuy calculation")
+    # (combo from the .ods-file: 4+3, see rows "Overbuy calculation")
+
     overbuy_factor = 1.295
 
     position_adjustment_enable = True
@@ -61,7 +73,13 @@ class SMAOffset_Hippocritical_dca(IStrategy):
     max_so_multiplier_orig = 3
     safety_order_step_scale = 2
     safety_order_volume_scale = 1.8
-    max_so_multiplier = max_so_multiplier_orig #just for initialization, now we calculate it...
+
+    # just for initialization, now we calculate it...
+    max_so_multiplier = max_so_multiplier_orig
+    # We will store the size of stake of each trade's first order here
+    cust_proposed_initial_stakes = {}
+    # Amount the strategy should compensate previously partially filled orders for successive safety orders (0.0 - 1.0)
+    partial_fill_compensation_scale = 1
 
     if (max_so_multiplier_orig > 0):
         if (safety_order_volume_scale > 1):
@@ -105,12 +123,22 @@ class SMAOffset_Hippocritical_dca(IStrategy):
 
         return None
 
+    def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str, amount: float,
+                           rate: float, time_in_force: str, exit_reason: str,
+                           current_time: datetime, **kwargs) -> bool:
+        # remove pair from custom initial stake dict only if full exit
+        if trade.amount == amount:
+            del self.cust_proposed_initial_stakes[pair]
+        return True
+
     # Let unlimited stakes leave funds open for DCA orders
     def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,
                             **kwargs) -> float:
         custom_stake = proposed_stake / self.max_so_multiplier * self.overbuy_factor
-        return custom_stake
+        self.cust_proposed_initial_stakes[
+            pair] = custom_stake  # Setting of first stake size just before each first order of a trade
+        return custom_stake # set to static 10 to simulate partial fills of 10$, etc
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime,
                               current_rate: float, current_profit: float, min_stake: float,
@@ -137,12 +165,33 @@ class SMAOffset_Hippocritical_dca(IStrategy):
 
             if current_profit <= (-1 * abs(safety_order_trigger)):
                 try:
-                    # This returns first order stake size
-                    stake_amount = filled_buys[0].cost
-                    # This then calculates current safety order size
-                    stake_amount = stake_amount * math.pow(self.safety_order_volume_scale, (count_of_buys - 1))
-                    amount = stake_amount / current_rate
+                    # This returns first order actual stake size
+                    actual_initial_stake = filled_buys[0].cost
+
+                    # Fallback for when the initial stake was not set for whatever reason
+                    stake_amount = actual_initial_stake
+
                     already_bought = sum(filled_buy.cost for filled_buy in filled_buys)
+
+                    if self.cust_proposed_initial_stakes[trade.pair] > 0:
+                        # This calculates the amount of stake that will get used for the current safety order,
+                        # including compensation for any partial buys
+                        proposed_initial_stake = self.cust_proposed_initial_stakes[trade.pair]
+                        current_actual_stake = already_bought * math.pow(self.safety_order_volume_scale,
+                                                                         (count_of_buys - 1))
+                        current_stake_preposition = proposed_initial_stake * math.pow(self.safety_order_volume_scale,
+                                                                                      (count_of_buys - 1))
+                        current_stake_preposition_compensation = current_stake_preposition + abs(
+                            current_stake_preposition - current_actual_stake)
+                        total_so_stake = lerp(current_actual_stake, current_stake_preposition_compensation,
+                                              self.partial_fill_compensation_scale)
+                        # Set the calculated stake amount
+                        stake_amount = total_so_stake
+                    else:
+                        # Fallback stake amount calculation
+                        stake_amount = stake_amount * math.pow(self.safety_order_volume_scale, (count_of_buys - 1))
+
+                    amount = stake_amount / current_rate
                     logger.info(
                         f"Initiating safety order buy #{count_of_buys} "
                         f"for {trade.pair} with stake amount of {stake_amount}. "
