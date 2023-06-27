@@ -113,13 +113,12 @@ class SMAOffset_Hippocritical_dca(IStrategy):
         if tag:
             return tag
 
-        buy_tag = 'empty'
-        if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
-            buy_tag = trade.buy_tag
-        buy_tags = buy_tag.split()
+        entry_tag = 'empty'
+        if hasattr(trade, 'entry_tag') and trade.entry_tag is not None:
+            entry_tag = trade.entry_tag
 
         if current_profit <= -0.35:
-            return f'stop_loss ({buy_tag})'
+            return f'stop_loss ({entry_tag})'
 
         return None
 
@@ -146,7 +145,7 @@ class SMAOffset_Hippocritical_dca(IStrategy):
         if current_profit > self.initial_safety_order_trigger:
             return None
 
-        filled_buys = trade.select_filled_orders('buy')
+        filled_buys = trade.select_filled_orders(trade.entry_side)
         count_of_buys = len(filled_buys)
 
         if 1 <= count_of_buys <= self.max_so_multiplier_orig:
