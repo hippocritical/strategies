@@ -127,7 +127,7 @@ class SMAOffset_Hippocritical_dca(IStrategy):
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
         # remove pair from custom initial stake dict only if full exit
-        if trade.amount == amount:
+        if trade.amount == amount and pair in self.cust_proposed_initial_stakes:
             del self.cust_proposed_initial_stakes[pair]
         return True
 
