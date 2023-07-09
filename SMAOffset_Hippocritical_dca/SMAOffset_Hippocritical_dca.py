@@ -113,13 +113,12 @@ class SMAOffset_Hippocritical_dca(IStrategy):
         if tag:
             return tag
 
-        buy_tag = 'empty'
-        if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
-            buy_tag = trade.buy_tag
-        buy_tags = buy_tag.split()
+        entry_tag = 'empty'
+        if hasattr(trade, 'entry_tag') and trade.entry_tag is not None:
+            entry_tag = trade.entry_tag
 
         if current_profit <= -0.35:
-            return f'stop_loss ({buy_tag})'
+            return f'stop_loss ({entry_tag})'
 
         return None
 
@@ -127,7 +126,7 @@ class SMAOffset_Hippocritical_dca(IStrategy):
                            rate: float, time_in_force: str, exit_reason: str,
                            current_time: datetime, **kwargs) -> bool:
         # remove pair from custom initial stake dict only if full exit
-        if trade.amount == amount:
+        if trade.amount == amount and pair in self.cust_proposed_initial_stakes:
             del self.cust_proposed_initial_stakes[pair]
         return True
 
@@ -146,7 +145,7 @@ class SMAOffset_Hippocritical_dca(IStrategy):
         if current_profit > self.initial_safety_order_trigger:
             return None
 
-        filled_buys = trade.select_filled_orders('buy')
+        filled_buys = trade.select_filled_orders(trade.entry_side)
         count_of_buys = len(filled_buys)
 
         if 1 <= count_of_buys <= self.max_so_multiplier_orig:
@@ -172,21 +171,24 @@ class SMAOffset_Hippocritical_dca(IStrategy):
                     stake_amount = actual_initial_stake
 
                     already_bought = sum(filled_buy.cost for filled_buy in filled_buys)
-
-                    if self.cust_proposed_initial_stakes[trade.pair] > 0:
-                        # This calculates the amount of stake that will get used for the current safety order,
-                        # including compensation for any partial buys
-                        proposed_initial_stake = self.cust_proposed_initial_stakes[trade.pair]
-                        current_actual_stake = already_bought * math.pow(self.safety_order_volume_scale,
-                                                                         (count_of_buys - 1))
-                        current_stake_preposition = proposed_initial_stake * math.pow(self.safety_order_volume_scale,
-                                                                                      (count_of_buys - 1))
-                        current_stake_preposition_compensation = current_stake_preposition + abs(
-                            current_stake_preposition - current_actual_stake)
-                        total_so_stake = lerp(current_actual_stake, current_stake_preposition_compensation,
-                                              self.partial_fill_compensation_scale)
-                        # Set the calculated stake amount
-                        stake_amount = total_so_stake
+                    if trade.pair in self.cust_proposed_initial_stakes:
+                        if self.cust_proposed_initial_stakes[trade.pair] > 0:
+                            # This calculates the amount of stake that will get used for the current safety order,
+                            # including compensation for any partial buys
+                            proposed_initial_stake = self.cust_proposed_initial_stakes[trade.pair]
+                            current_actual_stake = already_bought * math.pow(self.safety_order_volume_scale,
+                                                                             (count_of_buys - 1))
+                            current_stake_preposition = proposed_initial_stake * math.pow(self.safety_order_volume_scale,
+                                                                                          (count_of_buys - 1))
+                            current_stake_preposition_compensation = current_stake_preposition + abs(
+                                current_stake_preposition - current_actual_stake)
+                            total_so_stake = lerp(current_actual_stake, current_stake_preposition_compensation,
+                                                  self.partial_fill_compensation_scale)
+                            # Set the calculated stake amount
+                            stake_amount = total_so_stake
+                        else:
+                            # Fallback stake amount calculation
+                            stake_amount = stake_amount * math.pow(self.safety_order_volume_scale, (count_of_buys - 1))
                     else:
                         # Fallback stake amount calculation
                         stake_amount = stake_amount * math.pow(self.safety_order_volume_scale, (count_of_buys - 1))
