@@ -20,7 +20,7 @@ import datetime
 from technical.util import resample_to_interval, resampled_merge
 from datetime import datetime, timedelta
 from freqtrade.persistence import Trade
-from freqtrade.strategy import stoploss_from_open, merge_informative_pair, DecimalParameter, IntParameter, \
+from freqtrade.strategy import stoploss_from_open, DecimalParameter, IntParameter, \
     CategoricalParameter
 import technical.indicators as ftt
 
@@ -267,10 +267,9 @@ class SMAOffset_Hippocritical_dca(IStrategy):
 
     # Optimal timeframe for the strategy
     timeframe = '5m'
-    informative_timeframe = '1h'
 
     process_only_new_candles = True
-    startup_candle_count: int = 576
+    startup_candle_count: int = 1000
 
     plot_config = \
         {
@@ -314,20 +313,6 @@ class SMAOffset_Hippocritical_dca(IStrategy):
 
     use_custom_stoploss = False
 
-    def informative_pairs(self):
-
-        pairs = self.dp.current_whitelist()
-        informative_pairs = [(pair, self.informative_timeframe) for pair in pairs]
-
-        return informative_pairs
-
-    def get_informative_indicators(self, metadata: dict):
-
-        dataframe = self.dp.get_pair_dataframe(
-            pair=metadata['pair'], timeframe=self.informative_timeframe)
-
-        return dataframe
-
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
         # Calculate all ma_buy values
@@ -349,11 +334,12 @@ class SMAOffset_Hippocritical_dca(IStrategy):
         # RSI
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
 
+        candles_bidaily_of_5m: int = 576
         # Check for 0 volume candles in the last day
         dataframe['missing_data'] = \
             (dataframe['volume'] <= 0).rolling(
-                window=self.startup_candle_count,
-                min_periods=self.startup_candle_count).sum()
+                window=candles_bidaily_of_5m,
+                min_periods=candles_bidaily_of_5m).sum()
 
         return dataframe
 
